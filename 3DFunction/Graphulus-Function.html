@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<title>Graphulus: 3D Functions (Three.js)</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link rel=stylesheet href="css/base.css"/>
+</head> 
+<body>
+
+<script src="js/Three.js"></script>
+<script src="js/Detector.js"></script>
+<script src="js/Stats.js"></script>
+<script src="js/TrackballControls.js"></script> 
+<script src="js/THREEx.KeyboardState.js"></script>
+<script src="js/THREEx.FullScreen.js"></script>
+<script src="js/THREEx.WindowResize.js"></script>
+
+<script type='text/javascript' src='js/DAT.GUI.min.js'></script>
+
+<!-- http://silentmatt.com/javascript-expression-evaluator/ -->
+<script src="js/parser.js"></script>
+
+<!-- jQuery code to display an information button and box when clicked. -->
+<script src="js/jquery-1.9.1.js"></script>
+<!--<script src="js/jquery-ui.js"></script>
+<link rel=stylesheet href="css/jquery-ui.css" />
+<link rel=stylesheet href="css/info.css"/>
+<script src="js/info.js"></script>-->
+<div id="infoButton"></div>
+<div id="infoBox" title="Demo Information">
+This three.js demo is part of a collection at
+<a href="http://stemkoski.github.io/Three.js/">http://stemkoski.github.io/Three.js/</a>
+</div>
+<!-- ------------------------------------------------------------ -->
+
+<div id="ThreeJS" style="position: absolute; left:0px; top:0px"></div>
+<script>
+/*
+	Three.js "tutorials by example"
+	Author: Lee Stemkoski
+	Date: July 2013 (three.js v59dev)
+*/
+
+// MAIN
+
+// standard global variables
+var container, scene, camera, renderer, controls, stats;
+var keyboard = new THREEx.KeyboardState();
+var clock = new THREE.Clock();
+
+// custom global variables
+var gui, gui_zText, 
+	gui_xMin, gui_xMax, gui_yMin, gui_yMax,
+	gui_a, gui_b, gui_c, gui_d,
+	gui_segments;
+
+var zFuncText = "x^2 - y^2";
+var zFunc = Parser.parse(zFuncText).toJSFunction( ['x','y'] );
+
+// parameters for the equations
+var a = 0.01, b = 0.01, c = 0.01, d = 0.01;
+
+var meshFunction;
+var segments = 20, 
+	xMin = -50, xMax = 50, xRange = xMax - xMin,
+	yMin = -50, yMax = 50, yRange = yMax - yMin,
+	zMin = -50, zMax = 50, zRange = zMax - zMin;
+	
+var graphGeometry;
+var gridMaterial, wireMaterial, vertexColorMaterial;
+var graphMesh;
+
+init();
+animate();
+
+// FUNCTIONS 		
+function init() 
+{
+	// SCENE
+	scene = new THREE.Scene();
+	// CAMERA
+	var SCREEN_WIDTH = window.innerWidth, SCREEN_HEIGHT = window.innerHeight;
+	var VIEW_ANGLE = 45, ASPECT = SCREEN_WIDTH / SCREEN_HEIGHT, NEAR = 0.1, FAR = 20000;
+	camera = new THREE.PerspectiveCamera( VIEW_ANGLE, ASPECT, NEAR, FAR);
+	scene.add(camera);
+	camera.position.set(0,150,400);
+	camera.lookAt(scene.position);	
+	// RENDERER
+	if ( Detector.webgl )
+		renderer = new THREE.WebGLRenderer( {antialias:true} );
+	else
+		renderer = new THREE.CanvasRenderer(); 
+	renderer.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+	container = document.getElementById( 'ThreeJS' );
+	container.appendChild( renderer.domElement );
+	// EVENTS
+	THREEx.WindowResize(renderer, camera);
+	THREEx.FullScreen.bindKey({ charCode : 'm'.charCodeAt(0) });
+	// CONTROLS
+	controls = new THREE.TrackballControls( camera, renderer.domElement );
+	// STATS
+	stats = new Stats();
+	stats.domElement.style.position = 'absolute';
+	stats.domElement.style.bottom = '0px';
+	stats.domElement.style.zIndex = 100;
+	container.appendChild( stats.domElement );
+	// LIGHT
+	var light = new THREE.PointLight(0xffffff);
+	light.position.set(0,250,0);
+	scene.add(light);
+	// SKYBOX/FOG
+	// scene.fog = new THREE.FogExp2( 0x888888, 0.00025 );
+	
+	////////////
+	// CUSTOM //
+	////////////
+	
+	scene.add( new THREE.AxisHelper() );
+
+	// wireframe for xy-plane
+/*	var wireframeMaterial = new THREE.MeshBasicMaterial( { color: 0x000088, wireframe: true, side:THREE.DoubleSide } ); 
+	var floorGeometry = new THREE.PlaneGeometry(1000,1000,10,10);
+	var floor = new THREE.Mesh(floorGeometry, wireframeMaterial);
+	floor.position.z = -0.01;
+	// rotate to lie in x-y plane
+	// floor.rotation.x = Math.PI / 2;
+	scene.add(floor); */
+	
+	var normMaterial = new THREE.MeshNormalMaterial;
+	var shadeMaterial = new THREE.MeshLambertMaterial( { color: 0xff0000 } );
+	
+	// "wireframe texture"
+	var wireTexture = new THREE.ImageUtils.loadTexture( 'images/square.png' );
+	wireTexture.wrapS = wireTexture.wrapT = THREE.RepeatWrapping; 
+	wireTexture.repeat.set( 40, 40 );
+	wireMaterial = new THREE.MeshBasicMaterial( { map: wireTexture, vertexColors: THREE.VertexColors, side:THREE.DoubleSide } );
+
+	var vertexColorMaterial  = new THREE.MeshBasicMaterial( { vertexColors: THREE.VertexColors } );
+
+	// bgcolor
+	renderer.setClearColor( 0x888888, 1 );
+
+	///////////////////
+	//   GUI SETUP   //	
+	///////////////////
+	gui = new dat.GUI();
+	
+	parameters = 
+	{
+		resetCam:  function() { resetCamera(); },	
+		preset1:   function() { preset01(); },
+		graphFunc: function() { createGraph(); },
+		finalValue: 337
+	};
+
+	// GUI -- equation
+	gui_zText = gui.add( this, 'zFuncText' ).name('z = f(x,y) = ');
+	gui_xMin = gui.add( this, 'xMin' ).name('x Minimum = ');
+	gui_xMax = gui.add( this, 'xMax' ).name('x Maximum = ');
+	gui_yMin = gui.add( this, 'yMin' ).name('y Minimum = ');
+	gui_yMax = gui.add( this, 'yMax' ).name('y Maximum = ');
+	gui_segments = gui.add( this, 'segments' ).name('Subdivisions = ');
+
+	// GUI -- parameters
+	var gui_parameters = gui.addFolder('Parameters');
+	a = b = c = d = 0.01;
+	gui_a = gui_parameters.add( this, 'a' ).min(-5).max(5).step(0.01).name('a = ');
+	//gui_a.onChange( function(value) { createGraph(); } );
+	gui_b = gui_parameters.add( this, 'b' ).min(-5).max(5).step(0.01).name('b = ');
+	//gui_b.onChange( function(value) { createGraph(); } );
+	gui_c = gui_parameters.add( this, 'c' ).min(-5).max(5).step(0.01).name('c = ');
+	//gui_c.onChange( function(value) { createGraph(); } );
+	gui_d = gui_parameters.add( this, 'd' ).min(-5).max(5).step(0.01).name('d = ');
+	//gui_d.onChange( function(value) { createGraph(); } );
+	gui_a.setValue(1);
+	gui_b.setValue(1);
+	gui_c.setValue(1);
+	gui_d.setValue(1);
+
+	// GUI -- preset equations
+	var gui_preset = gui.addFolder('Preset equations');
+	gui_preset.add( parameters, 'preset1' ).name('Sine Circles');
+
+	gui.add( parameters, 'resetCam' ).name("Reset Camera");
+	gui.add( parameters, 'graphFunc' ).name("Graph Function");	
+
+	preset01();
+
+}
+
+function createGraph()
+{
+	xRange = xMax - xMin;
+	yRange = yMax - yMin;
+	zFunc = Parser.parse(zFuncText).toJSFunction( ['x','y'] );
+	meshFunction = function(x, y) 
+	{
+		x = xRange * x + xMin;
+		y = yRange * y + yMin;
+		var z = zFunc(x,y); //= Math.cos(x) * Math.sqrt(y);
+		if ( isNaN(z) )
+			return new THREE.Vector3(0,0,0); // TODO: better fix
+		else
+			return new THREE.Vector3(x, y, z);
+	};
+	
+	// true => sensible image tile repeat...
+	graphGeometry = new THREE.ParametricGeometry( meshFunction, segments, segments, true );
+	
+	///////////////////////////////////////////////
+	// calculate vertex colors based on Z values //
+	///////////////////////////////////////////////
+	graphGeometry.computeBoundingBox();
+	zMin = graphGeometry.boundingBox.min.z;
+	zMax = graphGeometry.boundingBox.max.z;
+	zRange = zMax - zMin;
+	var color, point, face, numberOfSides, vertexIndex;
+	// faces are indexed using characters
+	var faceIndices = [ 'a', 'b', 'c', 'd' ];
+	// first, assign colors to vertices as desired
+	for ( var i = 0; i < graphGeometry.vertices.length; i++ ) 
+	{
+		point = graphGeometry.vertices[ i ];
+		color = new THREE.Color( 0x0000ff );
+		color.setHSL( 0.7 * (zMax - point.z) / zRange, 1, 0.5 );
+		graphGeometry.colors[i] = color; // use this array for convenience
+	}
+	// copy the colors as necessary to the face's vertexColors array.
+	for ( var i = 0; i < graphGeometry.faces.length; i++ ) 
+	{
+		face = graphGeometry.faces[ i ];
+		numberOfSides = ( face instanceof THREE.Face3 ) ? 3 : 4;
+		for( var j = 0; j < numberOfSides; j++ ) 
+		{
+			vertexIndex = face[ faceIndices[ j ] ];
+			face.vertexColors[ j ] = graphGeometry.colors[ vertexIndex ];
+		}
+	}
+	///////////////////////
+	// end vertex colors //
+	///////////////////////
+	console.log('here')
+	console.log(graphGeometry);
+	// material choices: vertexColorMaterial, wireMaterial , normMaterial , shadeMaterial
+	
+	if (graphMesh) 
+	{
+		scene.remove( graphMesh );
+		// renderer.deallocateObject( graphMesh );
+	}
+
+	
+	
+	wireMaterial.map.repeat.set( segments, segments );
+	graphMesh = new THREE.Mesh( graphGeometry, wireMaterial );
+	graphMesh.doubleSided = true;
+	scene.add(graphMesh);
+	
+	
+	var a = { x:10,
+			  y:10 }
+	var b = { x:50,
+			  y:50 }
+
+	var geometry = new THREE.Geometry();
+	geometry.vertices.push( new THREE.Vector3( a.x, a.y, 0 ) );
+	geometry.vertices.push( new THREE.Vector3( b.x, a.y, 2 ) );
+	geometry.vertices.push( new THREE.Vector3( b.x, b.y, 1 ) );
+	geometry.vertices.push( new THREE.Vector3( a.x, b.y, 0.5 ) );
+	geometry.faces.push( new THREE.Face3( 0, 1, 2 ) ); // counter-clockwise winding order
+	geometry.faces.push( new THREE.Face3( 0, 2, 3 ) );
+	geometry.computeFaceNormals();
+	geometry.computeVertexNormals();
+	
+	geometry.computeBoundingBox();
+	Min1 = geometry.boundingBox.min;
+	Max1 = geometry.boundingBox.max;
+	zMinS = Min1.z;
+	zMaxS = Max1.z;
+	zRangeS = zMaxS - zMinS;	
+
+	var colorS, pointS, faceS, numberOfSidesS, vertexIndexS;	
+	// UV maping
+		var offset = new THREE.Vector2(0 - Min1.x, 0 - Min1.y);
+		var range = new THREE.Vector2(Max1.x - Min1.x, Max1.y - Min1.y);
+		var faces = geometry.faces;
+		geometry.faceVertexUvs[0] = [];
+		for (var i = 0; i < faces.length ; i++) {
+			var v1 = geometry.vertices[faces[i].a], 
+				v2 = geometry.vertices[faces[i].b], 
+				v3 = geometry.vertices[faces[i].c];
+				geometry.faceVertexUvs[0].push([
+				new THREE.Vector3((v1.x + offset.x)/range.x ,(v1.y + offset.y)/range.y,0),
+				new THREE.Vector3((v2.x + offset.x)/range.x ,(v2.y + offset.y)/range.y,0),
+				new THREE.Vector3((v3.x + offset.x)/range.x ,(v3.y + offset.y)/range.y,0)
+			]);
+		}
+		geometry.uvsNeedUpdate = true;	
+	// set colors on vertices	
+		for ( var i = 0; i < geometry.vertices.length; i++ ) 
+		{
+			pointS = geometry.vertices[ i ];
+			colorS = new THREE.Color( 0x0000ff );
+			colorS.setHSL( 0.7 * (zMaxS - pointS.z) / zRangeS, 1, 0.5 );
+			geometry.colors[i] = colorS; // use this array for convenience
+			geometry.vertices[i].z = 0;
+		}
+		geometry.colorsNeedUpdate = true;		
+
+	// set face vertexColors
+		for ( var i = 0; i < geometry.faces.length; i++ ) 
+		{
+			faceS = geometry.faces[ i ];			
+			numberOfSidesS = ( faceS instanceof THREE.Face3 ) ? 3 : 4;
+			for( var j = 0; j < numberOfSidesS; j++ ) 
+			{
+				vertexIndexS = faceS[ faceIndices[ j ] ];
+				faceS.vertexColors[ j ] = geometry.colors[ vertexIndexS ];
+			}	
+		}
+
+	var wireTexture2 = new THREE.ImageUtils.loadTexture( 'images/square.png' );
+	wireTexture2.wrapS = wireTexture2.wrapT = THREE.RepeatWrapping; 
+	wireTexture2.repeat.set( 100, 100 );
+	var wireMaterial2 = new THREE.MeshBasicMaterial( { map: wireTexture2, vertexColors: THREE.VertexColors, side:THREE.DoubleSide } );
+			
+	//wireMaterial2.map.repeat.set( 10, 10 );
+	var sideMesh =  new THREE.Mesh( geometry, wireMaterial2 );
+	sideMesh.doubleSided = true;
+	scene.add(sideMesh);		
+}
+
+function besselk(n,coef,variable){
+	if (n===0){
+		return "(1.782*exp(-5.857*"+coef+"*"+variable+"))+(1.587*exp(-1.325*"+coef+"*"+variable+"))";// "K0("+coef+"*"+variable+")";//
+	}
+	if (n===1){
+		return "(18.9*exp(-10.98*"+coef+"*"+variable+"))+(3.914*exp(-1.82*"+coef+"*"+variable+"))"; // "K1("+coef+"*"+variable+")";//
+	}	
+}
+
+function phi(B1,B2,q,s,variable){
+	return "((-1/"+variable+")*"+B1+"*"+besselk(1,q,variable)+")+"+"((1/"+variable+")*"+B2+"*"+besselk(1,s,variable)+")+"+"((-1*"+q+")*"+B1+"*"+besselk(0,q,variable)+")" 
+}
+
+function psi(B1,B2,q,s,variable){
+	return "((-1/"+variable+")*"+B1+"*"+besselk(1,q,variable)+")+"+"((1/"+variable+")*"+B2+"*"+besselk(1,s,variable)+")+"+"((1*"+s+")*"+B2+"*"+besselk(0,s,variable)+")" 
+}
+
+function Dphi_Dr(B1,B2,q,s,variable){
+	return "(1/"+variable+")*("+B1+"*"+q+"*"+besselk(0,q,variable)+"-"+B2+"*"+s+"*"+besselk(0,s,variable)+")"+"+(2/("+variable+"^2))*("+B1+"*"+besselk(1,q,variable)+"-"+B2+"*"+besselk(1,s,variable)+")+"+B1+"*"+q+"*"+besselk(1,q,variable)
+}
+
+function Dpsi_Dr(B1,B2,q,s,variable){
+	return "(1/"+variable+")*("+B1+"*"+q+"*"+besselk(0,q,variable)+"-"+B2+"*"+s+"*"+besselk(0,s,variable)+")"+"+(2/("+variable+"^2))*("+B1+"*"+besselk(1,q,variable)+"-"+B2+"*"+besselk(1,s,variable)+")-"+B2+"*"+s+"*"+besselk(1,s,variable)
+}
+
+function preset01()
+{// set function here **************************************
+
+	//console.log('phi', phi('B1','B2','q','s','r'))
+	//console.log('psi', psi('B1','B2','q','s','r'))
+	//console.log('Dphi_Dr', Dphi_Dr('B1','B2','q','s','r'))
+	//console.log('Dpsi_Dr', Dpsi_Dr('B1','B2','q','s','r'))
+	
+	//var Func = 1+"*sin(atan(y/x))*("+psi(0.2,0.1,0.2,0.3,'sqrt((x^2)+(y^2))')+")"
+	
+	gui_zText.setValue("sin(sqrt(a*(x^2)  + b*(y^2)))*1/(sqrt((x^2)+(y^2)))");
+	//gui_zText.setValue(Func);
+	gui_xMin.setValue(-50); gui_xMax.setValue(50);
+	gui_yMin.setValue(-50); gui_yMax.setValue(50);
+	gui_a.setValue(1);
+	gui_b.setValue(1);
+	gui_segments.setValue(300);// set mesh size
+	createGraph(); resetCamera();
+}
+		
+function resetCamera()
+{
+	// CAMERA
+	var SCREEN_WIDTH = window.innerWidth, SCREEN_HEIGHT = window.innerHeight;
+	var VIEW_ANGLE = 45, ASPECT = SCREEN_WIDTH / SCREEN_HEIGHT, NEAR = 0.1, FAR = 20000;
+	camera = new THREE.PerspectiveCamera( VIEW_ANGLE, ASPECT, NEAR, FAR);
+	camera.position.set( 2*xMax, 0.5*yMax, 4*zMax);
+	camera.up = new THREE.Vector3( 0, 0, 1 );
+	camera.lookAt(scene.position);	
+	scene.add(camera);
+	
+	controls = new THREE.TrackballControls( camera, renderer.domElement );
+	THREEx.WindowResize(renderer, camera);
+}
+
+function animate() 
+{
+    requestAnimationFrame( animate );
+	render();		
+	update();
+}
+
+function update()
+{
+	if ( keyboard.pressed("z") ) 
+	{ 
+		// do something
+	}
+	
+	controls.update();
+	stats.update();
+}
+
+function render() 
+{
+	renderer.render( scene, camera );
+}
+
+</script>
+
+</body>
+</html>
